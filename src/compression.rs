@@ -9,7 +9,7 @@ fn read_chunk(
     file_reader: &mut BufReader<File>,
     read_buffer: &mut String,
     block_size: usize,
-) -> Result<Option<usize>> {
+) -> Result<Option<u64>> {
     // TODO: check that block_size is > 0
     let mut total_bytes_read: usize = 0;
 
@@ -21,7 +21,7 @@ fn read_chunk(
             return if total_bytes_read == 0 {
                 Ok(None)
             } else {
-                Ok(Some(total_bytes_read))
+                Ok(Some(total_bytes_read as u64))
             };
         }
 
@@ -29,7 +29,7 @@ fn read_chunk(
 
         // Terminate if block_size is met
         if total_bytes_read >= block_size {
-            return Ok(Some(total_bytes_read));
+            return Ok(Some(total_bytes_read as u64));
         }
     }
 }
@@ -77,7 +77,7 @@ pub fn write_indexed_zstd(
     zstd_level: i32,
 ) -> Result<()> {
     let mut idx_records: Vec<FrameMeta> = Vec::new();
-    let mut seq_position: usize = 0;
+    let mut seq_position = 0;
 
     let mut read_buffer = String::new();
 
@@ -87,7 +87,7 @@ pub fn write_indexed_zstd(
 
         let (start_pos, end_pos) = encode_zstd_block(&zstd_writer, content_bytes, zstd_level)?;
 
-        let length = (end_pos - start_pos) as usize;
+        let length = end_pos - start_pos;
         let frame_record = FrameMeta::new(start_pos, length, seq_position);
 
         idx_records.push(frame_record);

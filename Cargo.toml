@@ -1,11 +1,13 @@
 [package]
 name = "parallel_decompression"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
 ahash = "0.8.12"
 anyhow = "1.0.100"
+byte-unit = "5.2.0"
+clap = { version = "4.5.54", features = ["derive"] }
 crossbeam = "0.8.4"
 rayon = "1.11.0"
 serde = { version = "1.0.228", features = ["derive"] }
