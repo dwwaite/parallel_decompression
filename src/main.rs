@@ -1,28 +1,77 @@
+use anyhow::Result;
+use clap::Parser;
+
 fn main() {
-    // Compress input file into zstd with blocks
-    let input_file: String = "test/data.txt".into();
-    let output_file: String = "example.zstd".into();
-    let index_file: String = "example.zstd.idx".into();
+    let user_inputs = ArgumentParser::parse();
 
-    // Test the reader
-    let block_size: usize = 200;
-    let zstd_level: i32 = 3;
+    let operation_results: Result<()> = match &user_inputs.command {
+        Workflow::Compress {
+            input,
+            output,
+            zindex,
+            block_size,
+            level,
+        } => parallel_decompression::perform_compression(input, output, zindex, block_size, *level),
+        Workflow::Decompress {
+            input,
+            zindex,
+            num_threads,
+        } => parallel_decompression::perform_decompression(input, zindex, *num_threads),
+    };
 
-    let zstd_result = parallel_decompression::perform_compression(
-        &input_file,
-        &output_file,
-        &index_file,
-        block_size,
-        zstd_level,
-    );
-
-    match zstd_result {
-        Ok(_) => {
-            println!("Success!");
-            println!("  Input file:  {}", input_file);
-            println!("  Output file: {}", output_file);
-            println!("  Index file:  {}", index_file);
+    match operation_results {
+        Ok(_) => println!("\nCompleted!"),
+        Err(e) => {
+            eprintln!("Operation failed!\n");
+            eprintln!("{}", e);
         }
-        Err(e) => eprintln!("{}", e),
     }
+}
+
+#[derive(Parser)]
+#[clap(author="David Waite", version, about, long_about=None)]
+struct ArgumentParser {
+    #[command(subcommand)]
+    command: Workflow,
+}
+
+#[derive(clap::Subcommand)]
+enum Workflow {
+    /// Create an indexed zstd compression of the target input file
+    Compress {
+        /// The input file to which taxonomic information is appended (REQUIRED)
+        #[clap(short, long, value_parser, value_name = "INPUT")]
+        input: String,
+
+        /// Target file to store the blocked zstd payload (REQUIRED)
+        #[clap(short, long, value_parser, value_name = "OUTPUT")]
+        output: String,
+
+        /// Target file to store the blocked zstd index (REQUIRED)
+        #[clap(short, long, value_parser, value_name = "INDEX")]
+        zindex: String,
+
+        /// The block size for compression (supports human-readable formats e.g. '64KiB, 128MiB, 2GB')
+        #[clap(short, long, default_value_t = String::from("64KiB"), value_name = "BLOCK_SIZE")]
+        block_size: String,
+
+        /// Compression level for zstd
+        #[clap(short, long, default_value_t = 3, value_name = "COMPRESSION")]
+        level: i32,
+    },
+
+    /// Read an indexed zstd compression and parse results to a HashMap
+    Decompress {
+        /// The zstd file to be decompressed and parsed (REQUIRED)
+        #[clap(short, long, value_parser, value_name = "INPUT")]
+        input: String,
+
+        /// The zstd index file to be decompressed and parsed (REQUIRED)
+        #[clap(short, long, value_parser, value_name = "INDEX")]
+        zindex: String,
+
+        /// Number of threads to use for parallel file parsing
+        #[clap(short, long, default_value_t = 1, value_name = "THREADS")]
+        num_threads: usize,
+    },
 }
