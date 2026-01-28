@@ -122,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn read_chunk_single() {
+    fn test_read_chunk_single() {
         // Read with a block too small for a single line to ensure that reading does
         // proceed until the end of the line.
         let input_handle = open_file_read("test/data.txt");
@@ -138,7 +138,7 @@ mod tests {
     }
 
     #[test]
-    fn read_chunk_multi() {
+    fn test_read_chunk_multi() {
         // Read with a block too small for the whole file, but to cover several lines, to
         // confirm expected use case of multi-line reading.
         let input_handle = open_file_read("test/data.txt");
@@ -160,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn read_chunk_file() {
+    fn test_read_chunk_file() {
         // Test the behaviour of the function over the complete file.
         let input_handle = open_file_read("test/data.txt");
         let mut input_reader: BufReader<File> = BufReader::new(input_handle);
@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn encode_zstd_block_single() {
+    fn test_encode_zstd_block_single() {
         let target_file = "encode_zstd_block_single.zstd";
         let mut target_handle = open_file_write(target_file);
 
@@ -205,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn encode_zstd_block_multiple() {
+    fn test_encode_zstd_block_multiple() {
         let target_file = "encode_zstd_block_multiple.zstd";
         let mut target_handle = open_file_write(target_file);
 
@@ -228,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn write_indexed_zstd_single_frame() {
+    fn test_write_indexed_zstd_single_frame() {
         // Set up in the input reader/writers for the function arguments
         let input_handle = open_file_read("test/data.txt");
         let input_reader: BufReader<File> = BufReader::new(input_handle);
@@ -267,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn write_indexed_zstd_complete() {
+    fn test_write_indexed_zstd_complete() {
         // Set up in the input reader/writers for the function arguments
         let input_handle = open_file_read("test/data.txt");
         let input_reader: BufReader<File> = BufReader::new(input_handle);

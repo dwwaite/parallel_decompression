@@ -25,7 +25,10 @@ impl FrameMeta {
     pub fn parse_length(&self) -> Result<usize> {
         let u: usize = match self.length.try_into() {
             Ok(u) => u,
-            Err(_) => bail!("The frame at position {} could not be parsed correctly!", self.position),
+            Err(_) => bail!(
+                "The frame at position {} could not be parsed correctly!",
+                self.position,
+            ),
         };
         Ok(u)
     }
@@ -89,20 +92,13 @@ pub fn perform_compression(
     operation_result
 }
 
-pub fn perform_decompression(
-    zstd_file: &str,
-    idx_file: &str,
-    num_threads: usize,
-) -> Result<()> {
+pub fn perform_decompression(zstd_file: &str, idx_file: &str, num_threads: usize) -> Result<()> {
     let idx_handle = OpenOptions::new().read(true).open(idx_file)?;
     let idx_reader: BufReader<File> = BufReader::new(idx_handle);
 
     // Only open a handle on the idx file - zstd file requires a per-block handle to ensure
     // thread safety.
-    let operation_result = match num_threads {
-        0..1 => decompression::read_indexed_zstd_st(zstd_file, idx_reader),
-        _ => decompression::read_indexed_zstd_mt(zstd_file, idx_reader, num_threads),
-    };
+    let operation_result = decompression::read_indexed_zstd(zstd_file, idx_reader, num_threads);
 
     match &operation_result {
         Ok(map) => {
@@ -110,7 +106,7 @@ pub fn perform_decompression(
             println!("  Input file:  {}", zstd_file);
             println!("  Index file:  {}", idx_file);
             println!("  Total records processed: {}", map.len());
-        },
+        }
         Err(e) => bail!(e.to_string()),
     }
 
