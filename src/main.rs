@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use parallel_decompression::Mode;
 
 fn main() {
     let user_inputs = ArgumentParser::parse();
@@ -15,8 +16,9 @@ fn main() {
         Workflow::Decompress {
             input,
             zindex,
+            mode,
             num_threads,
-        } => parallel_decompression::perform_decompression(input, zindex, *num_threads),
+        } => parallel_decompression::perform_decompression(input, zindex, mode, *num_threads),
     };
 
     match operation_results {
@@ -73,5 +75,9 @@ enum Workflow {
         /// Number of threads to use for parallel file parsing
         #[clap(short, long, default_value_t = 1, value_name = "THREADS")]
         num_threads: usize,
+
+        /// Method for gathering zstd frame results
+        #[clap(long, default_value_t = Mode::DashMap, value_name = "MODE", value_enum)]
+        mode: Mode,
     },
 }

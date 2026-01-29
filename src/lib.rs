@@ -1,10 +1,48 @@
 mod compression;
 mod decompression;
+use ahash::AHashMap;
 use anyhow::{bail, Result};
 use byte_unit::Byte;
+use clap::ValueEnum;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter};
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum Mode {
+    DashMap,
+    Vector,
+    Merge,
+}
+
+pub enum EitherMap<K, V> {
+    Dash(DashMap<K, V>),
+    AHash(AHashMap<K, V>),
+}
+
+impl<K: Eq + std::hash::Hash, V> EitherMap<K, V> {
+    pub fn len(&self) -> usize {
+        match self {
+            EitherMap::Dash(m) => m.len(),
+            EitherMap::AHash(m) => m.len(),
+        }
+    }
+
+    pub fn into_ahash(self) -> Option<ahash::AHashMap<K, V>> {
+        match self {
+            EitherMap::AHash(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn into_dash(self) -> Option<dashmap::DashMap<K, V>> {
+        match self {
+            EitherMap::Dash(m) => Some(m),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FrameMeta {
@@ -92,13 +130,22 @@ pub fn perform_compression(
     operation_result
 }
 
-pub fn perform_decompression(zstd_file: &str, idx_file: &str, num_threads: usize) -> Result<()> {
+pub fn perform_decompression(
+    zstd_file: &str,
+    idx_file: &str,
+    mode: &Mode,
+    num_threads: usize,
+) -> Result<()> {
     let idx_handle = OpenOptions::new().read(true).open(idx_file)?;
     let idx_reader: BufReader<File> = BufReader::new(idx_handle);
 
-    // Only open a handle on the idx file - zstd file requires a per-block handle to ensure
-    // thread safety.
-    let operation_result = decompression::read_indexed_zstd(zstd_file, idx_reader, num_threads);
+    let operation_result = match mode {
+        Mode::DashMap => {
+            decompression::read_indexed_zstd_dashmap(zstd_file, idx_reader, num_threads)
+        }
+        Mode::Vector => decompression::read_indexed_zstd_vector(zstd_file, idx_reader, num_threads),
+        Mode::Merge => decompression::read_indexed_zstd_merge(zstd_file, idx_reader, num_threads),
+    };
 
     match &operation_result {
         Ok(map) => {

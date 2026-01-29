@@ -1,4 +1,5 @@
-use crate::FrameMeta;
+use crate::{EitherMap, FrameMeta};
+use ahash::AHashMap;
 use anyhow::{bail, Result};
 use dashmap::DashMap;
 use rayon::prelude::*;
@@ -67,11 +68,11 @@ fn map_zstd_frame(zstd_file: &str, idx_frame: FrameMeta) -> Result<Vec<(String, 
 
 //endregion:
 
-pub fn read_indexed_zstd(
+pub fn read_indexed_zstd_dashmap(
     zstd_file: &str,
     mut idx_reader: BufReader<File>,
     num_threads: usize,
-) -> Result<DashMap<String, u64>> {
+) -> Result<EitherMap<String, u64>> {
     let idx_buffer: Vec<FrameMeta> = load_frame_index(&mut idx_reader)?;
     let record_map: DashMap<String, u64> = DashMap::new();
 
@@ -94,14 +95,82 @@ pub fn read_indexed_zstd(
         })
     });
 
-    Ok(record_map)
+    Ok(EitherMap::Dash(record_map))
+}
+
+pub fn read_indexed_zstd_vector(
+    zstd_file: &str,
+    mut idx_reader: BufReader<File>,
+    num_threads: usize,
+) -> Result<EitherMap<String, u64>> {
+    let idx_buffer: Vec<FrameMeta> = load_frame_index(&mut idx_reader)?;
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .thread_name(|i| format!("decompression-worker-{i}"))
+        .build()
+        .unwrap();
+
+    let record_buffer: Vec<Vec<(String, u64)>> = pool.install(|| {
+        idx_buffer
+            .into_iter()
+            .par_bridge()
+            .map(|idx_frame| map_zstd_frame(zstd_file, idx_frame))
+            .filter_map(Result::ok)
+            .collect()
+    });
+
+    // Condense into the returnable HashMap
+    let record_map: AHashMap<String, u64> = record_buffer.into_iter().flatten().collect();
+    Ok(EitherMap::AHash(record_map))
+}
+
+pub fn read_indexed_zstd_merge(
+    zstd_file: &str,
+    mut idx_reader: BufReader<File>,
+    num_threads: usize,
+) -> Result<EitherMap<String, u64>> {
+    let idx_buffer: Vec<FrameMeta> = load_frame_index(&mut idx_reader)?;
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .thread_name(|i| format!("decompression-worker-{i}"))
+        .build()
+        .unwrap();
+
+    let record_map: AHashMap<String, u64> = pool.install(|| {
+        idx_buffer
+            .into_iter()
+            .par_bridge()
+            .map(|idx_frame| map_zstd_frame(zstd_file, idx_frame))
+            .filter_map(Result::ok)
+            .into_par_iter()
+            .map(|pairs| {
+                let mut local = AHashMap::with_capacity(pairs.len());
+                for (k, v) in pairs {
+                    local.insert(k, v);
+                }
+                local
+            })
+            .reduce(AHashMap::new, |mut a, mut b| {
+                // Organise the HashMaps such that a is always larger than b
+                // This is quite a niche command, so not imported at start of file
+                if a.len() < b.len() {
+                    std::mem::swap(&mut a, &mut b);
+                }
+                a.reserve(b.len()); // Increase the capacity of larger to fit smaller
+                a.extend(b);
+                a
+            })
+    });
+
+    Ok(EitherMap::AHash(record_map))
 }
 
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use std::collections::HashMap;
     use std::fs::OpenOptions;
     use std::io::BufRead;
 
@@ -109,8 +178,22 @@ mod tests {
         OpenOptions::new().read(true).open(file_path).unwrap()
     }
 
+    fn data_to_ahashmap(file_name: &str) -> AHashMap<String, u64> {
+        BufReader::new(open_file_read(file_name))
+            .lines()
+            .map(|line| {
+                let line_content = line.unwrap();
+
+                let (acc, rest) = line_content.trim().split_once('\t').unwrap();
+                let u: u64 = rest.parse().unwrap();
+
+                (acc.to_string(), u)
+            })
+            .collect()
+    }
+
     #[test]
-    fn test_load_frame_index_() {
+    fn test_load_frame_index() {
         let file_name = "test/example.zstd.idx";
         let mut json_handle = BufReader::new(open_file_read(file_name));
 
@@ -184,27 +267,54 @@ mod tests {
     }
 
     #[test]
-    fn test_read_indexed_zstd() {
+    fn test_read_indexed_zstd_dashmap() {
         let input_file = "test/example.zstd";
         let idx_reader = BufReader::new(open_file_read("test/example.zstd.idx"));
 
-        let exp_map: HashMap<String, u64> = BufReader::new(open_file_read("test/data.txt"))
-            .lines()
-            .map(|line| {
-                let line_content = line.unwrap();
+        let exp_map: AHashMap<String, u64> = data_to_ahashmap("test/data.txt");
 
-                let (acc, rest) = line_content.trim().split_once('\t').unwrap();
-                let u: u64 = rest.parse().unwrap();
-
-                (acc.to_string(), u)
-            })
-            .collect();
-
-        let obs_result = read_indexed_zstd(input_file, idx_reader, 2);
+        let obs_result = read_indexed_zstd_dashmap(input_file, idx_reader, 2);
         assert!(obs_result.is_ok());
 
         // DashMap does not implement PartialEq, so cast to HashMap for easy comparison.
-        let obs_map: HashMap<String, u64> = obs_result.unwrap().into_iter().collect();
-        assert_eq!(exp_map, obs_map);
+        match obs_result.unwrap().into_dash() {
+            Some(m) => {
+                let obs_map: AHashMap<String, u64> = m.into_iter().collect();
+                assert_eq!(exp_map, obs_map);
+            }
+            None => assert!(false, "Returned data was not of type DashMap"),
+        };
+    }
+
+    #[test]
+    fn test_read_indexed_zstd_vector() {
+        let input_file = "test/example.zstd";
+        let idx_reader = BufReader::new(open_file_read("test/example.zstd.idx"));
+
+        let exp_map: AHashMap<String, u64> = data_to_ahashmap("test/data.txt");
+
+        let obs_result = read_indexed_zstd_vector(input_file, idx_reader, 2);
+        assert!(obs_result.is_ok());
+
+        match obs_result.unwrap().into_ahash() {
+            Some(obs_map) => assert_eq!(exp_map, obs_map),
+            None => assert!(false, "Returned data was not of type AHashMap"),
+        };
+    }
+
+    #[test]
+    fn test_read_indexed_zstd_merge() {
+        let input_file = "test/example.zstd";
+        let idx_reader = BufReader::new(open_file_read("test/example.zstd.idx"));
+
+        let exp_map: AHashMap<String, u64> = data_to_ahashmap("test/data.txt");
+
+        let obs_result = read_indexed_zstd_merge(input_file, idx_reader, 2);
+        assert!(obs_result.is_ok());
+
+        match obs_result.unwrap().into_ahash() {
+            Some(obs_map) => assert_eq!(exp_map, obs_map),
+            None => assert!(false, "Returned data was not of type AHashMap"),
+        };
     }
 }
